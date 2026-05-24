@@ -29,7 +29,10 @@ def create_driver():
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")  # important for NAS/low-memory envs
     options.add_argument("--disable-gpu")
-    return webdriver.Chrome(options=options)
+    
+    service = webdriver.ChromeService(executable_path="/usr/bin/chromedriver")
+    options.binary_location = "/usr/bin/chromium"
+    return webdriver.Chrome(service=service, options=options)
 
 
 def login(driver):
