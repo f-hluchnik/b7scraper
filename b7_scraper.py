@@ -1,4 +1,5 @@
 import os
+import tempfile
 import time
 import logging
 from dotenv import load_dotenv
@@ -19,6 +20,9 @@ LOGIN_BUTTON_SELECTOR = "button.MuiButtonBase-root:nth-child(4)"
 MARKETPLACE_BUTTON_SELECTOR = "a.MuiButton-root:nth-child(2)"
 EMPTY_STATE_SELECTOR = "div.css-cp0569 p.css-t2rycj"
 
+ALERTS_CHANNEL_ID = "ALERTS_CHANNEL_ID"
+HEALTHCHECK_CHANNEL_ID = "HEALTHCHECK_CHANNEL_ID"
+
 CHECK_INTERVAL = 120  # seconds
 MAX_RETRIES = 3
 
@@ -29,7 +33,7 @@ def create_driver():
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")  # important for NAS/low-memory envs
     options.add_argument("--disable-gpu")
-    
+
     service = webdriver.ChromeService(executable_path="/usr/bin/chromedriver")
     options.binary_location = "/usr/bin/chromium"
     return webdriver.Chrome(service=service, options=options)
@@ -59,41 +63,57 @@ def check_for_listings(driver):
     # Reload the page each check to get fresh content
     driver.get(URL)
     try:
-        WebDriverWait(driver, 10).until(
+        WebDriverWait(driver, 30).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, EMPTY_STATE_SELECTOR))
         )
         return False, None
     except TimeoutException:
         # Empty state didn't appear — listings are present
         body = driver.find_element(By.TAG_NAME, "body").text
-        return True, body
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            screenshot_path = f.name
+        driver.save_screenshot(screenshot_path)
+        return True, screenshot_path
 
 
-def send_alert(message):
+def send_alert(message, screenshot_path=None, channel=ALERTS_CHANNEL_ID):
     slack_client = WebClient(token=os.getenv("SLACK_BOT_TOKEN"))
-    slack_client.chat_postMessage(
-        channel=os.getenv("ALERTS_CHANNEL_ID"),
-        text=message
-    )
+    if screenshot_path:
+        slack_client.files_upload_v2(
+            channel=os.getenv(channel),
+            file=screenshot_path,
+            initial_comment=message
+        )
+        os.unlink(screenshot_path)
+    else:
+        slack_client.chat_postMessage(
+            channel=os.getenv(channel),
+            text=message
+        )
 
 
 def run():
     driver = None
     retries = 0
+    last_healthcheck = 0
 
     while True:
+        if time.time() - last_healthcheck >= 3600:  # every 1 hour
+            send_alert("everything okay", channel=HEALTHCHECK_CHANNEL_ID)
+            last_healthcheck = time.time()
         try:
             if driver is None:
                 logging.info("Starting browser and logging in...")
                 driver = create_driver()
                 login(driver)
                 logging.info("Logged in successfully.")
+                enter_marketplace(driver)
 
-            has_listings, page_text = check_for_listings(driver)
+            has_listings, screenshot_path = check_for_listings(driver)
 
             if has_listings:
                 logging.info("Listings found! Sending alert...")
-                send_alert(f"🔔 New listings found! {URL}")
+                send_alert(f"🔔 New listings found! {URL}", screenshot_path)
                 # Keep monitoring — remove the break if you want repeated alerts
                 # or add a cooldown to avoid spamming
             else:
@@ -116,7 +136,7 @@ def run():
             if retries >= MAX_RETRIES:
                 logging.error("Max retries reached. Sending alert and pausing for 10 minutes.")
                 try:
-                    send_alert("⚠️ b7id scraper is having issues and needs attention.")
+                    send_alert(message=f"⚠️ b7id scraper is having issues and needs attention. {e}", channel=HEALTHCHECK_CHANNEL_ID)
                 except Exception:
                     pass
                 retries = 0
@@ -130,4 +150,7 @@ def run():
 
 
 if __name__ == '__main__':
-    run()
+    try:
+        run()
+    except Exception as e:
+        send_alert(message=f'oops: {e}', screenshot_path=None, channel=HEALTHCHECK_CHANNEL_ID)
