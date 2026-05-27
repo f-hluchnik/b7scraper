@@ -72,6 +72,8 @@ def check_for_listings(driver):
         body = driver.find_element(By.TAG_NAME, "body").text
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
             screenshot_path = f.name
+        scroll_y = driver.execute_script("return window.innerHeight / 2")
+        driver.execute_script(f"window.scrollTo(0, {scroll_y})")
         driver.save_screenshot(screenshot_path)
         return True, screenshot_path
 
