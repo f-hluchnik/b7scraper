@@ -100,7 +100,7 @@ def run():
     last_healthcheck = 0
 
     while True:
-        if time.time() - last_healthcheck >= 3600:  # every 1 hour
+        if time.time() - last_healthcheck >= 1800:  # every 1/2 hour
             send_alert("everything okay", channel=HEALTHCHECK_CHANNEL_ID)
             last_healthcheck = time.time()
         try:
@@ -128,6 +128,12 @@ def run():
             retries += 1
             logging.warning(f"Browser/session error (attempt {retries}/{MAX_RETRIES}): {e}")
 
+            if retries == 1:
+                try:
+                    send_alert(f"⚠️ Scraper lost connection, retrying... gap in coverage possible. {e}", channel=HEALTHCHECK_CHANNEL_ID)
+                except Exception:
+                    pass
+
             if driver:
                 try:
                     driver.quit()
@@ -142,7 +148,7 @@ def run():
                 except Exception:
                     pass
                 retries = 0
-                time.sleep(600)
+                time.sleep(120)
             else:
                 time.sleep(30)  # short wait before retrying
 
